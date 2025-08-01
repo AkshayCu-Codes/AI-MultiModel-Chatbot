@@ -1,4 +1,4 @@
-import os
+import streamlit as st
 import groq
 from openai import OpenAI as OpenAIClient
 import google.generativeai as genai
@@ -7,13 +7,26 @@ import google.generativeai as genai
 class ConversationManager:
     def __init__(self, api_provider="groq"):
         self.api_provider = api_provider.lower()
-        self.history = []
-        self.persona_message = "You are a friendly AI chatbot."
 
-        # API Keys from environment variables (Streamlit Secrets recommended)
-        self.groq_client = groq.Client(api_key=os.getenv("GROQ_API_KEY"))
-        self.openai_client = OpenAIClient(api_key=os.getenv("OPENAI_API_KEY"))
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        # API Keys from Streamlit secrets
+        self.groq_api_key = st.secrets.get("GROQ_API_KEY")
+        self.openai_api_key = st.secrets.get("OPENAI_API_KEY")
+        self.gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+
+        # Initialize API clients
+        self.openai_client = OpenAIClient(api_key=self.openai_api_key) if self.openai_api_key else None
+        if self.gemini_api_key:
+            genai.configure(api_key=self.gemini_api_key)
+
+        # System message
+        self.system_message = {"role": "system", "content": "You are a helpful assistant."}
+        self.persona_message = self.system_message["content"]
+
+        # Conversation history for API calls (API-safe format)
+        self.conversation_history = [self.system_message]
+
+        # Display history for UI (can store API info here)
+        self.display_history = []  
 
     def set_persona(self, persona):
         personas = {
@@ -27,55 +40,54 @@ class ConversationManager:
         self.persona_message = message
 
     def reset_conversation_history(self):
-        self.history = []
+        self.conversation_history = [self.system_message]
+        self.display_history = []
 
     def chat_completion(self, user_input, temperature=0.7, max_tokens=300):
-        self.history.append({"role": "user", "content": user_input})
+        # Append user message (API-safe)
+        self.conversation_history.append({"role": "user", "content": user_input})
+        self.display_history.append({"role": "user", "content": user_input})
 
         try:
             if self.api_provider == "openai":
-                return self._chat_openai(user_input, temperature, max_tokens)
+                reply = self._chat_openai(user_input, temperature, max_tokens)
             elif self.api_provider == "gemini":
-                return self._chat_gemini(user_input, temperature, max_tokens)
-            else:  # Default Groq
-                return self._chat_groq(user_input, temperature, max_tokens)
-
+                reply = self._chat_gemini(user_input, temperature, max_tokens)
+            else:
+                reply = self._chat_groq(user_input, temperature, max_tokens)
         except Exception:
-            # Fallback to Groq if other APIs fail
-            return self._chat_groq(user_input, temperature, max_tokens)
+            reply = self._chat_groq(user_input, temperature, max_tokens)
+
+        # Append assistant message to both histories
+        self.conversation_history.append({"role": "assistant", "content": reply})
+        self.display_history.append({"role": "assistant", "content": reply, "api": self.api_provider})
+
+        return reply
 
     def _chat_groq(self, user_input, temperature, max_tokens):
-        response = self.groq_client.chat.completions.create(
+        client = groq.Groq(api_key=self.groq_api_key)
+        response = client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=[
-                {"role": "system", "content": self.persona_message},
-                *self.history
-            ],
+            messages=self.conversation_history,
             temperature=temperature,
             max_tokens=max_tokens
         )
-        reply = response.choices[0].message["content"]
-        self.history.append({"role": "assistant", "content": reply})
-        return reply
+        return response.choices[0].message.content
 
     def _chat_openai(self, user_input, temperature, max_tokens):
         response = self.openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": self.persona_message},
-                *self.history
+                *self.conversation_history
             ],
             temperature=temperature,
             max_tokens=max_tokens
         )
-        reply = response.choices[0].message["content"]
-        self.history.append({"role": "assistant", "content": reply})
-        return reply
+        return response.choices[0].message.content
 
     def _chat_gemini(self, user_input, temperature, max_tokens):
         model = genai.GenerativeModel("gemini-1.5-flash")
         chat_session = model.start_chat(history=[])
         response = chat_session.send_message(f"{self.persona_message}\nUser: {user_input}")
-        reply = response.text
-        self.history.append({"role": "assistant", "content": reply})
-        return reply
+        return response.text
