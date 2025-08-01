@@ -33,20 +33,63 @@ else:
 if st.sidebar.button("Reset Conversation"):
     manager.reset_conversation_history()
 
+# Show Current API in Main UI
+api_colors = {
+    "groq": "#22c55e",   # Green
+    "openai": "#3b82f6", # Blue
+    "gemini": "#f97316"  # Orange
+}
+
+st.markdown(
+    f"""
+    <div style='padding:10px; border-radius:8px; background-color:{api_colors[manager.api_provider]}; color:white; font-weight:bold;'>
+        🚀 Currently using: {api_provider}
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 # Chat Interface
 st.subheader("💬 Chat")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in manager.history:
+for msg in manager.display_history:
     if msg["role"] != "system":
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                api_used = msg.get("api", manager.api_provider)
+                st.markdown(
+                    f"""
+                    <div style='display:flex; align-items:center;'>
+                        <span>{msg["content"]}</span>
+                        <span style='margin-left:8px; padding:2px 6px; border-radius:5px; background:{api_colors.get(api_used, "#555")}; color:white; font-size:10px;'>
+                            {api_used.capitalize()}
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(msg["content"])
 
+
+# Handle new user input
 user_input = st.chat_input("Type your message...")
 if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
     reply = manager.chat_completion(user_input, temperature, max_tokens)
     with st.chat_message("assistant"):
-        st.markdown(reply)
+        api_used = manager.api_provider  # API just used
+        st.markdown(
+            f"""
+            <div style='display:flex; align-items:center;'>
+                <span>{reply}</span>
+                <span style='margin-left:8px; padding:2px 6px; border-radius:5px; background:{api_colors.get(api_used, "#555")}; color:white; font-size:10px;'>
+                    {api_used.capitalize()}
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
